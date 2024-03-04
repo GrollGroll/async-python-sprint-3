@@ -28,20 +28,49 @@ class Server:
             
             massage += letter
 
-    async def client_authorization(self, reader: StreamReader, writer: StreamWriter, ip: str):
+    async def client_authorization(self, reader: StreamReader, writer: StreamWriter):
+        address = writer.get_extra_info('peername')
+        ip = address[0]
+        logger.info(f'IP клиента: {ip}.')
         name = Client().get_name(ip)
 
+        # Если такой IP уже зарегестрирован:
         if name:
             greetings = f'Hello, {name}!\n'
             writer.write(greetings.encode())
+            return ip
+             
+        # Если новый пользователь или вход с нового устройства:
         else:
-            writer.write(b'Write your name, please: ')
+            clients = Client().get_clients()
+            writer.write(b'1 - login; \n 2 - registration \n')
             await writer.drain()
-            name = await self.listen(reader)
-            logger.debug(f'Принято новое имя {name} на регистрацию с ip {ip}.')
-            await Client().add_client(ip=ip, name=name)
-            greetings = f'Hello, {name}!\n'
-            writer.write(greetings.encode())
+            message = await self.listen(reader)
+            if message == '1':
+                writer.write(b'Your login: ')
+                await writer.drain()
+                name = await self.listen(reader)
+                greetings = f'Hello, {name}! You login from new device!\n'
+                writer.write(greetings.encode())
+                await writer.drain()
+                for ip in clients:
+                    if name == clients[ip]:
+                        return ip
+            elif message == '2':
+                while True:
+                    writer.write(b'Your new login: ')
+                    await writer.drain()
+                    name = await self.listen(reader)
+                    if name not in clients.values():
+                        logger.debug(f'Принят новый login {name} на регистрацию с ip {ip}.')
+                        await Client().add_client(ip=ip, name=name)
+                        greetings = f'Hello, {name}! You have successfully registered! \n'
+                        writer.write(greetings.encode())
+                        await writer.drain()
+                        return ip
+                    else:
+                        writer.write(b'A user with this login already exists!\n')
+                        await writer.drain()
 
     async def show_menu(self, writer: StreamWriter):
         menu = b"1 - general chat; \n 2 - personal chats; \n 3 - new chat"
@@ -50,10 +79,7 @@ class Server:
 
     async def client_connected(self, reader: StreamReader, writer: StreamWriter):
         logger.info('Сервер запустился.')
-        address = writer.get_extra_info('peername')
-        ip = address[0]
-        logger.info(f'IP клиента: {ip}.')
-        await self.client_authorization(reader, writer, ip)
+        ip = await self.client_authorization(reader, writer)
         await self.show_menu(writer)
         while True:
             filename = None
